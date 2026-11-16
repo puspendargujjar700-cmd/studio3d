@@ -15,7 +15,12 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - run: mkdir -p www && cp studio.html www/index.html
+      - name: Files ke naam theek karo
+        run: |
+          mkdir -p www
+          cp studio*.html www/index.html
+          [ -f package.json ] || cp package*.json package.json
+          [ -f capacitor.config.json ] || cp capacitor.config*.json capacitor.config.json
       - run: npm install
       - run: npx cap add android
       - run: npx cap sync android
