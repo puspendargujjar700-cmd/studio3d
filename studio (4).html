@@ -1,0 +1,393 @@
+<!doctype html><html lang="hi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>3D Animation Studio</title>
+<style>
+:root{--bg:#10131a;--fg:#e8ecf4;--ac:#ff9f1c;--pn:#1c2230}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:15px system-ui,sans-serif;overflow:hidden;touch-action:none;overscroll-behavior:none}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+#top{position:fixed;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top,0px) + 8px) 10px 14px;font-size:13px;background:linear-gradient(#000b,#0000);pointer-events:none}
+#bar{position:fixed;left:0;right:0;bottom:0;padding:8px 8px calc(env(safe-area-inset-bottom,0px) + 8px);background:var(--pn);display:grid;gap:8px;box-sizing:border-box}
+.row{display:flex;gap:8px;align-items:center}
+button,select{flex:1;min-height:52px;border:0;border-radius:12px;background:#2a3246;color:var(--fg);font:600 15px system-ui;min-width:0}
+button.on{background:var(--ac);color:#111}
+label{font-size:12px;flex:0 0 auto}
+input[type=range]{flex:1;min-width:0}
+#sheet,#sheet2{position:fixed;left:0;right:0;bottom:0;background:#141926;padding:12px 8px calc(env(safe-area-inset-bottom,0px) + 12px);display:none;gap:8px;z-index:5;border-radius:16px 16px 0 0}
+#sheet.show,#sheet2.show{display:grid}
+#list{font-size:12px;max-height:90px;overflow:auto}
+#toast{position:fixed;left:50%;top:60px;transform:translateX(-50%);background:#000c;padding:8px 14px;border-radius:20px;font-size:13px;display:none;z-index:9;max-width:90%}
+</style></head><body>
+<canvas id="cv"></canvas>
+<div id="top"><b>3D Studio v3</b> · <span id="st">taiyaar</span></div>
+<div id="toast"></div>
+<div id="sheet">
+ <div class="row"><button data-r="map">🗺 Map (.glb)</button><button data-r="char">🧍 Character (.glb)</button></div>
+ <div class="row"><button data-r="prop">🚗 Gadi/Prop (.glb)</button><button data-r="clip">🏃 Clip (.glb/.fbx)</button></div>
+ <div class="row"><button id="bFp">Files chooser: Auto (native)</button></div>
+ <div id="list"></div>
+ <div class="row"><button id="wipe">Saved sab hatao</button><button id="close">Band</button></div>
+</div>
+<div id="bar">
+ <div class="row"><button id="bImp">📂 Import</button><button id="bPath" class="on">✏️ Path: ON</button><button id="bUndo">↩ Undo</button><button id="bClr">🗑 Saaf</button><button id="bMore">⋯</button></div>
+ <div class="row"><input id="prm" placeholder="Likho: chalte hue aao, phir gadi mein baitho" style="flex:1;min-width:0;height:48px;border-radius:12px;border:0;padding:0 12px;background:#2a3246;color:#e8ecf4;font-size:15px"><button id="bGo" style="flex:0 0 74px">🎬</button></div>
+ <div class="row"><select id="clipSel"></select><button id="bPlay">▶ Chalo</button></div>
+ <div class="row"><label>Speed</label><input id="spd" type="range" min="0.3" max="8" step="0.1" value="1.3"><label id="spdv">1.3</label><label>Map</label><input id="msz" type="range" min="-2" max="1" step="0.05" value="0"></div>
+</div>
+<div id="sheet2">
+ <div class="row"><select id="camSel"><option value="free">Camera: Free (haath se)</option><option value="follow">Follow (peeche se)</option><option value="top">Upar se</option><option value="side">Side se</option><option value="front">Saamne se</option><option value="orbit">Orbit (ghoomta)</option></select></div>
+ <div class="row"><button id="bRec">⏺ Record + Chalo</button><button id="bSave">💾 Save</button><button id="bLoad">📂 Load</button></div>
+ <div id="tl" style="font-size:12px;white-space:pre-line;max-height:110px;overflow:auto">Timeline khali hai. Prompt box mein likho.</div>
+ <div class="row"><button id="bTlc">Timeline saaf</button><button id="bClose2">Band</button></div>
+</div>
+<input type="file" id="fj" style="display:none">
+<input type="file" id="fi" multiple accept="*/*" style="display:none">
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const cv=$('cv'),gl=cv.getContext('webgl2',{antialias:false,powerPreference:'high-performance'});
+const toast=m=>{const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',2600)};
+if(!gl){document.body.innerHTML='<p style="padding:20px">WebGL2 support nahi mila.</p>';throw 0}
+/* ---------- math ---------- */
+const M={
+ id:()=>new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]),
+ mul(a,b){const o=new Float32Array(16);for(let i=0;i<4;i++)for(let j=0;j<4;j++){let s=0;for(let k=0;k<4;k++)s+=a[k*4+j]*b[i*4+k];o[i*4+j]=s}return o},
+ trs(t,q,s){const[x,y,z,w]=q,x2=x+x,y2=y+y,z2=z+z,xx=x*x2,xy=x*y2,xz=x*z2,yy=y*y2,yz=y*z2,zz=z*z2,wx=w*x2,wy=w*y2,wz=w*z2;
+  return new Float32Array([(1-(yy+zz))*s[0],(xy+wz)*s[0],(xz-wy)*s[0],0,(xy-wz)*s[1],(1-(xx+zz))*s[1],(yz+wx)*s[1],0,(xz+wy)*s[2],(yz-wx)*s[2],(1-(xx+yy))*s[2],0,t[0],t[1],t[2],1])},
+ inv(a){const o=new Float32Array(16),a00=a[0],a01=a[1],a02=a[2],a03=a[3],a10=a[4],a11=a[5],a12=a[6],a13=a[7],a20=a[8],a21=a[9],a22=a[10],a23=a[11],a30=a[12],a31=a[13],a32=a[14],a33=a[15],
+ b00=a00*a11-a01*a10,b01=a00*a12-a02*a10,b02=a00*a13-a03*a10,b03=a01*a12-a02*a11,b04=a01*a13-a03*a11,b05=a02*a13-a03*a12,b06=a20*a31-a21*a30,b07=a20*a32-a22*a30,b08=a20*a33-a23*a30,b09=a21*a32-a22*a31,b10=a21*a33-a23*a31,b11=a22*a33-a23*a32;
+ let d=b00*b11-b01*b10+b02*b09+b03*b08-b04*b07+b05*b06;if(!d)return M.id();d=1/d;
+ o[0]=(a11*b11-a12*b10+a13*b09)*d;o[1]=(a02*b10-a01*b11-a03*b09)*d;o[2]=(a31*b05-a32*b04+a33*b03)*d;o[3]=(a22*b04-a21*b05-a23*b03)*d;
+ o[4]=(a12*b08-a10*b11-a13*b07)*d;o[5]=(a00*b11-a02*b08+a03*b07)*d;o[6]=(a32*b02-a30*b05-a33*b01)*d;o[7]=(a20*b05-a22*b02+a23*b01)*d;
+ o[8]=(a10*b10-a11*b08+a13*b06)*d;o[9]=(a01*b08-a00*b10-a03*b06)*d;o[10]=(a30*b04-a31*b02+a33*b00)*d;o[11]=(a21*b02-a20*b04-a23*b00)*d;
+ o[12]=(a11*b07-a10*b09-a12*b06)*d;o[13]=(a00*b09-a01*b07+a02*b06)*d;o[14]=(a31*b01-a30*b03-a32*b00)*d;o[15]=(a20*b03-a21*b01+a22*b00)*d;return o},
+ persp(f,a,n,r){const t=1/Math.tan(f/2);return new Float32Array([t/a,0,0,0,0,t,0,0,0,0,(r+n)/(n-r),-1,0,0,2*r*n/(n-r),0])},
+ look(e,c,u){let z=[e[0]-c[0],e[1]-c[1],e[2]-c[2]];let l=Math.hypot(...z);z=z.map(v=>v/l);let x=[u[1]*z[2]-u[2]*z[1],u[2]*z[0]-u[0]*z[2],u[0]*z[1]-u[1]*z[0]];l=Math.hypot(...x);x=x.map(v=>v/l);
+  const y=[z[1]*x[2]-z[2]*x[1],z[2]*x[0]-z[0]*x[2],z[0]*x[1]-z[1]*x[0]];const d=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+  return new Float32Array([x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-d(x,e),-d(y,e),-d(z,e),1])},
+ tx:(m,p)=>[m[0]*p[0]+m[4]*p[1]+m[8]*p[2]+m[12],m[1]*p[0]+m[5]*p[1]+m[9]*p[2]+m[13],m[2]*p[0]+m[6]*p[1]+m[10]*p[2]+m[14]]
+};
+const qY=a=>[0,Math.sin(a/2),0,Math.cos(a/2)];
+function slerp(a,b,t){let d=a[0]*b[0]+a[1]*b[1]+a[2]*b[2]+a[3]*b[3];let s=1;if(d<0){d=-d;s=-1}let k0,k1;
+ if(d>.9995){k0=1-t;k1=t*s}else{const th=Math.acos(d),sn=Math.sin(th);k0=Math.sin((1-t)*th)/sn;k1=Math.sin(t*th)/sn*s}
+ const o=[0,1,2,3].map(i=>a[i]*k0+b[i]*k1),l=Math.hypot(...o);return o.map(v=>v/l)}
+function decomp(m){const t=[m[12],m[13],m[14]],sx=Math.hypot(m[0],m[1],m[2]),sy=Math.hypot(m[4],m[5],m[6]),sz=Math.hypot(m[8],m[9],m[10]);
+ const r=[m[0]/sx,m[1]/sx,m[2]/sx,m[4]/sy,m[5]/sy,m[6]/sy,m[8]/sz,m[9]/sz,m[10]/sz];const tr=r[0]+r[4]+r[8];let q;
+ if(tr>0){const s=Math.sqrt(tr+1)*2;q=[(r[5]-r[7])/s,(r[6]-r[2])/s,(r[1]-r[3])/s,s/4]}
+ else if(r[0]>r[4]&&r[0]>r[8]){const s=Math.sqrt(1+r[0]-r[4]-r[8])*2;q=[s/4,(r[3]+r[1])/s,(r[6]+r[2])/s,(r[5]-r[7])/s]}
+ else if(r[4]>r[8]){const s=Math.sqrt(1+r[4]-r[0]-r[8])*2;q=[(r[3]+r[1])/s,s/4,(r[7]+r[5])/s,(r[6]-r[2])/s]}
+ else{const s=Math.sqrt(1+r[8]-r[0]-r[4])*2;q=[(r[6]+r[2])/s,(r[7]+r[5])/s,s/4,(r[1]-r[3])/s]}
+ return{t,r:q,s:[sx,sy,sz]}}
+/* ---------- shaders ---------- */
+const VS=`#version 300 es
+layout(location=0)in vec3 aP;layout(location=1)in vec3 aN;layout(location=2)in vec2 aU;layout(location=3)in uvec4 aJ;layout(location=4)in vec4 aW;
+uniform mat4 uVP,uM;uniform bool uSk;uniform sampler2D uJT;out vec3 vN,vW;out vec2 vU;
+mat4 J(uint i){int r=int(i);return mat4(texelFetch(uJT,ivec2(0,r),0),texelFetch(uJT,ivec2(1,r),0),texelFetch(uJT,ivec2(2,r),0),texelFetch(uJT,ivec2(3,r),0));}
+void main(){mat4 m=uM;if(uSk)m=uM*(aW.x*J(aJ.x)+aW.y*J(aJ.y)+aW.z*J(aJ.z)+aW.w*J(aJ.w));
+vec4 w=m*vec4(aP,1.);vW=w.xyz;vN=mat3(m)*aN;vU=aU;gl_Position=uVP*w;}`;
+const FS=`#version 300 es
+precision highp float;in vec3 vN,vW;in vec2 vU;uniform vec4 uC;uniform sampler2D uT;uniform bool uHT;uniform int uMode;uniform float uCut;uniform vec3 uCam;out vec4 o;
+void main(){vec4 c=uC;if(uHT)c*=texture(uT,vU);if(c.a<uCut)discard;vec3 col=c.rgb;
+if(uMode==1){vec2 g=vW.xz;vec2 a=abs(fract(g-.5)-.5)/fwidth(g);vec2 b=abs(fract(g/5.-.5)-.5)/fwidth(g/5.);
+col=mix(vec3(.17,.2,.25),vec3(.27,.31,.38),1.-min(min(a.x,a.y),1.));col=mix(col,vec3(.5,.56,.68),1.-min(min(b.x,b.y),1.));}
+else if(uMode==0){vec3 n=normalize(vN);float h=n.y*.5+.5,d=max(dot(n,normalize(vec3(.4,.8,.3))),0.);col=c.rgb*(mix(vec3(.28,.28,.34),vec3(.62,.64,.68),h)+d*.55);}
+float f=clamp(distance(vW,uCam)/600.-.1,0.,1.);col=mix(col,vec3(.063,.075,.1),f*f);o=vec4(col,1);}`;
+function sh(t,s){const x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShader(x);if(!gl.getShaderParameter(x,gl.COMPILE_STATUS))throw gl.getShaderInfoLog(x);return x}
+const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,VS));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,FS));gl.linkProgram(pr);
+if(!gl.getProgramParameter(pr,gl.LINK_STATUS))throw gl.getProgramInfoLog(pr);gl.useProgram(pr);
+const U={};['uVP','uM','uSk','uJT','uC','uT','uHT','uMode','uCut','uCam'].forEach(n=>U[n]=gl.getUniformLocation(pr,n));
+gl.uniform1i(U.uT,0);gl.uniform1i(U.uJT,1);gl.vertexAttribI4ui(3,0,0,0,0);
+const jTex=gl.createTexture();gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,jTex);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.activeTexture(gl.TEXTURE0);
+/* ---------- GPU prims ---------- */
+function mkPrim(d){const v=gl.createVertexArray();gl.bindVertexArray(v);
+ const B=(data,loc,size,norm,int)=>{const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);gl.enableVertexAttribArray(loc);
+  const ty=data instanceof Float32Array?gl.FLOAT:data instanceof Uint8Array?gl.UNSIGNED_BYTE:gl.UNSIGNED_SHORT;
+  int?gl.vertexAttribIPointer(loc,size,ty,0,0):gl.vertexAttribPointer(loc,size,ty,norm&&ty!==gl.FLOAT,0,0)};
+ B(d.pos,0,3);d.nrm?B(d.nrm,1,3):gl.vertexAttrib3f(1,0,1,0);d.uv?B(d.uv,2,2):gl.vertexAttrib2f(2,0,0);
+ if(d.jnt){B(d.jnt,3,4,0,true);B(d.wgt,4,4,true)}
+ let idx=d.idx;if(!idx){const n=d.pos.length/3;idx=n>65535?new Uint32Array(n):new Uint16Array(n);for(let i=0;i<n;i++)idx[i]=i}
+ if(idx instanceof Uint8Array)idx=Uint16Array.from(idx);
+ const ib=gl.createBuffer();gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,idx,gl.STATIC_DRAW);gl.bindVertexArray(null);
+ let mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];if(d.min){mn=d.min;mx=d.max}else for(let i=0;i<d.pos.length;i+=3)for(let k=0;k<3;k++){mn[k]=Math.min(mn[k],d.pos[i+k]);mx[k]=Math.max(mx[k],d.pos[i+k])}
+ const c=[0,1,2].map(k=>(mn[k]+mx[k])/2);
+ return{vao:v,n:idx.length,ty:idx instanceof Uint32Array?gl.UNSIGNED_INT:gl.UNSIGNED_SHORT,mat:d.mat||{c:[.8,.8,.8,1]},sk:!!d.jnt,min:mn,max:mx,c,r:Math.hypot(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])/2}}
+function cubeData(){const F=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]],P=[],N=[],I=[];
+ for(const n of F){const u=n[0]?[0,0,1]:[1,0,0],v=n[1]?[0,0,1]:[0,1,0],b=P.length/3;
+  for(const[a,c]of[[-1,-1],[1,-1],[1,1],[-1,1]]){for(let k=0;k<3;k++)P.push(.5*n[k]+.5*(a*u[k]+c*v[k]));N.push(...n)}I.push(b,b+1,b+2,b,b+2,b+3)}
+ return{pos:new Float32Array(P),nrm:new Float32Array(N),idx:new Uint16Array(I)}}
+const cube=mkPrim(cubeData());
+/* ---------- GLB loader ---------- */
+let AID=0;
+function acc(g,bin,i){const a=g.accessors[i],C={5120:Int8Array,5121:Uint8Array,5122:Int16Array,5123:Uint16Array,5125:Uint32Array,5126:Float32Array}[a.componentType],
+ n={SCALAR:1,VEC2:2,VEC3:3,VEC4:4,MAT4:16}[a.type],es=C.BYTES_PER_ELEMENT*n;
+ if(a.bufferView==null)return new C(a.count*n);const bv=g.bufferViews[a.bufferView],off=(bv.byteOffset||0)+(a.byteOffset||0),st=bv.byteStride||es;
+ let tmp;if(st===es)tmp=bin.slice(off,off+a.count*es);else{tmp=new Uint8Array(a.count*es);for(let k=0;k<a.count;k++)tmp.set(bin.subarray(off+k*st,off+k*st+es),k*es)}
+ return new C(tmp.buffer)}
+const nrmName=s=>(s||'').replace(/^.*[:|]/,'').toLowerCase().replace(/[^a-z0-9]/g,'').replace(/^mixamorig/,'');
+async function loadGLB(buf){
+ const dv=new DataView(buf);if(dv.getUint32(0,true)!==0x46546C67)throw new Error('GLB file nahi hai');
+ let p=12,g,bin;while(p<buf.byteLength){const l=dv.getUint32(p,true),t=dv.getUint32(p+4,true),d=new Uint8Array(buf,p+8,l);
+  if(t===0x4E4F534A)g=JSON.parse(new TextDecoder().decode(d));else if(t===0x004E4942)bin=d;p+=8+l}
+ const texs=[];
+ for(const im of g.images||[]){try{const bv=g.bufferViews[im.bufferView],blob=new Blob([bin.subarray(bv.byteOffset||0,(bv.byteOffset||0)+bv.byteLength)],{type:im.mimeType||'image/png'});
+  let bm=await createImageBitmap(blob,{premultiplyAlpha:'none',colorSpaceConversion:'none'});
+  if(Math.max(bm.width,bm.height)>2048){const k=2048/Math.max(bm.width,bm.height);bm.close();bm=await createImageBitmap(blob,{resizeWidth:Math.round(bm.width*k)||2048,resizeHeight:Math.round(bm.height*k)||2048,resizeQuality:'medium'})}
+  const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,bm);gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);bm.close();texs.push(t)}catch(e){texs.push(null)}}
+ const mats=(g.materials||[]).map(m=>{const pb=m.pbrMetallicRoughness||{},ti=pb.baseColorTexture?.index;
+  return{c:pb.baseColorFactor||[.8,.8,.8,1],tex:ti!=null?texs[g.textures[ti].source]:null,cut:m.alphaMode==='MASK'||m.alphaMode==='BLEND'?(m.alphaCutoff??.5):0}});
+ const meshes=(g.meshes||[]).map(m=>m.primitives.filter(q=>(q.mode??4)===4).map(q=>{const A=q.attributes,pa=g.accessors[A.POSITION];
+  return mkPrim({pos:acc(g,bin,A.POSITION),nrm:A.NORMAL!=null?acc(g,bin,A.NORMAL):null,uv:A.TEXCOORD_0!=null?acc(g,bin,A.TEXCOORD_0):null,
+   jnt:A.JOINTS_0!=null?acc(g,bin,A.JOINTS_0):null,wgt:A.WEIGHTS_0!=null?acc(g,bin,A.WEIGHTS_0):null,idx:q.indices!=null?acc(g,bin,q.indices):null,
+   min:pa.min,max:pa.max,mat:q.material!=null?mats[q.material]:null})}));
+ const nodes=(g.nodes||[]).map((n,i)=>{let t=n.translation||[0,0,0],r=n.rotation||[0,0,0,1],s=n.scale||[1,1,1];if(n.matrix){const d=decomp(n.matrix);t=d.t;r=d.r;s=d.s}
+  return{name:n.name||'n'+i,t,r,s,ch:n.children||[],mesh:n.mesh,skin:n.skin}});
+ const sc=g.scenes?.[g.scene||0]?.nodes||nodes.map((_,i)=>i).filter(i=>!nodes.some(n=>n.ch.includes(i)));
+ const skins=(g.skins||[]).map(s=>({j:s.joints,ibm:s.inverseBindMatrices!=null?acc(g,bin,s.inverseBindMatrices):null}));
+ const anims=(g.animations||[]).map((a,ai)=>{const ch=[];let dur=0;
+  for(const c of a.channels){const sp=a.samplers[c.sampler],tm=acc(g,bin,sp.input),vl=acc(g,bin,sp.output),nm=nrmName(nodes[c.target.node]?.name);
+   if(!['translation','rotation'].includes(c.target.path))continue;dur=Math.max(dur,tm[tm.length-1]);ch.push({nm,path:c.target.path,tm,vl,ip:sp.interpolation||'LINEAR'})}
+  return{name:a.name||'anim'+ai,dur,ch}});
+ const A={id:++AID,nodes,roots:sc,skins,meshes,anims,byName:{}};nodes.forEach((n,i)=>A.byName[nrmName(n.name)]=i);return A}
+/* ---------- instances ---------- */
+function inst(A){const I={A,t:[],r:[],s:[],w:[],cm:new Map()};rest(I);return I}
+function rest(I){const n=I.A.nodes;I.t=n.map(x=>x.t.slice());I.r=n.map(x=>x.r.slice());I.s=n.map(x=>x.s.slice())}
+function upd(I){const N=I.A.nodes,go=(i,pw)=>{const l=M.trs(I.t[i],I.r[i],I.s[i]),w=pw?M.mul(pw,l):l;I.w[i]=w;for(const c of N[i].ch)go(c,w)};for(const r of I.A.roots)go(r,null)}
+function applyAnim(I,an,t,tag){const tt=an.dur>0?t%an.dur:0;let cm=I.cm.get(an);
+ if(!cm){const hips=I.A.byName.hips;let rs=1;
+  cm=an.ch.map(c=>I.A.byName[c.nm]);const hc=an.ch.find(c=>c.nm==='hips'&&c.path==='translation');
+  if(hc&&hips!=null&&hc.vl[1]>0&&!an.proc)rs=I.A.nodes[hips].t[1]/hc.vl[1];cm.rs=rs;I.cm.set(an,cm)}
+ an.ch.forEach((c,k)=>{const ni=cm[k];if(ni==null)return;const nn=c.path==='rotation'?4:3,tm=c.tm,st=c.ip==='CUBICSPLINE'?3:1;
+  let i=0,hi=tm.length-1;if(tt>=tm[hi])i=hi;else{let lo=0;while(hi-lo>1){const m=(lo+hi)>>1;tm[m]<=tt?lo=m:hi=m}i=lo}
+  const get=j=>{const o=(j*st+(st===3?1:0))*nn;return Array.from(c.vl.subarray(o,o+nn))};
+  let v=get(i);if(i<tm.length-1&&c.ip!=='STEP'){const f=(tt-tm[i])/(tm[i+1]-tm[i]),b=get(i+1);v=nn===4?slerp(v,b,f):v.map((x,q)=>x+(b[q]-x)*f)}
+  if(nn===4)I.r[ni]=v;else if(c.nm==='hips'){const bt=I.A.nodes[ni].t;I.t[ni]=[bt[0],v[1]*cm.rs,bt[2]]}})}
+function upSkin(I,si){const s=I.A.skins[si],o=new Float32Array(s.j.length*16);
+ s.j.forEach((j,k)=>{const ib=s.ibm?s.ibm.subarray(k*16,k*16+16):M.id();o.set(M.mul(I.w[j],ib),k*16)});return o}
+/* ---------- built-in bot (rig + procedural clips) ---------- */
+function makeBot(){
+ const J=[['Hips',-1,[0,.95,0]],['Spine',0,[0,.2,0]],['Head',1,[0,.3,0]],['LeftArm',1,[.25,.12,0]],['LeftForeArm',3,[0,-.28,0]],['RightArm',1,[-.25,.12,0]],['RightForeArm',5,[0,-.28,0]],
+  ['LeftUpLeg',0,[.1,0,0]],['LeftLeg',7,[0,-.45,0]],['LeftFoot',8,[0,-.45,0]],['RightUpLeg',0,[-.1,0,0]],['RightLeg',10,[0,-.45,0]],['RightFoot',11,[0,-.45,0]]];
+ const wp=[];const nodes=J.map((j,i)=>{wp[i]=j[1]<0?j[2].slice():wp[j[1]].map((v,k)=>v+j[2][k]);return{name:j[0],t:j[2],r:[0,0,0,1],s:[1,1,1],ch:[],mesh:i==0?0:undefined,skin:i==0?0:undefined}});
+ J.forEach((j,i)=>{if(j[1]>=0)nodes[j[1]].ch.push(i)});
+ const P=[],N=[],I=[],JN=[],W=[];
+ const box=(c,s,j)=>{const F=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+  for(const n of F){const u=n[0]?[0,0,1]:[1,0,0],v=n[1]?[0,0,1]:[0,1,0],b=P.length/3;
+   for(const[a,d]of[[-1,-1],[1,-1],[1,1],[-1,1]]){for(let k=0;k<3;k++)P.push(c[k]+(n[k]+a*u[k]+d*v[k])*s[k]/2);N.push(...n);JN.push(j,0,0,0);W.push(1,0,0,0)}I.push(b,b+1,b+2,b,b+2,b+3)}};
+ const o=(i,d)=>wp[i].map((v,k)=>v+d[k]);
+ box([0,.95,0],[.3,.2,.18],0);box([0,1.25,0],[.34,.45,.2],1);box([0,1.62,0],[.2,.22,.22],2);box([0,1.6,.13],[.05,.05,.05],2);
+ for(const[a,f]of[[3,4],[5,6]]){box(o(a,[0,-.14,0]),[.09,.28,.09],a);box(o(f,[0,-.14,0]),[.08,.28,.08],f)}
+ for(const[u,l,f]of[[7,8,9],[10,11,12]]){box(o(u,[0,-.225,0]),[.13,.45,.13],u);box(o(l,[0,-.225,0]),[.11,.45,.11],l);box(o(f,[0,-.02,.07]),[.11,.07,.26],f)}
+ const ibm=new Float32Array(J.length*16);wp.forEach((p,i)=>ibm.set(M.trs([-p[0],-p[1],-p[2]],[0,0,0,1],[1,1,1]),i*16));
+ const prim=mkPrim({pos:new Float32Array(P),nrm:new Float32Array(N),jnt:new Uint8Array(JN),wgt:new Float32Array(W),idx:new Uint16Array(I),mat:{c:[1,.62,.15,1],cut:0}});
+ const A={id:++AID,nodes,roots:[0],skins:[{j:J.map((_,i)=>i),ibm}],meshes:[[prim]],byName:{},bot:true,H:1.75};nodes.forEach((n,i)=>A.byName[nrmName(n.name)]=i);
+ const gen=(name,T,Am,K,arm,bob)=>{const F=24,tm=new Float32Array(F+1).map((_,i)=>i/F*T),ch=[];const q=a=>[Math.sin(a/2),0,0,Math.cos(a/2)];
+  const rot=(nm,fn)=>{const vl=new Float32Array((F+1)*4);for(let i=0;i<=F;i++)vl.set(q(fn(2*Math.PI*i/F)),i*4);ch.push({nm,path:'rotation',tm,vl,ip:'LINEAR'})};
+  rot('leftupleg',p=>-Am*Math.sin(p));rot('rightupleg',p=>Am*Math.sin(p));
+  rot('leftleg',p=>.08+K*Math.max(0,Math.cos(p)));rot('rightleg',p=>.08+K*Math.max(0,-Math.cos(p)));
+  rot('leftarm',p=>arm*Math.sin(p));rot('rightarm',p=>-arm*Math.sin(p));rot('leftforearm',()=>-.4);rot('rightforearm',()=>-.4);
+  const vl=new Float32Array((F+1)*3);for(let i=0;i<=F;i++)vl.set([0,.95+bob*Math.cos(4*Math.PI*i/F),0],i*3);ch.push({nm:'hips',path:'translation',tm,vl,ip:'LINEAR'});
+  return{name,dur:T,ch,proc:true}};
+ A.anims=[gen('Walk',1,.35,.9,.5,.04),gen('Run',.62,.62,1.5,.9,.06)];return A}
+/* ---------- state ---------- */
+const S={map:null,mapA:null,char:null,clips:[],pts:[],dense:[],cum:[],L:0,play:false,s:0,yaw:0,t:0,pathOn:true,mapScale:1,pickY:0,cur:null,cs:0,
+ cam:{yaw:.7,pitch:.55,dist:9,tg:[0,.8,0]},rs:1,drawn:0,total:0,spdW:[]};
+S.paths=[{pts:[],dense:[],cum:[],L:0},{pts:[],dense:[],cum:[],L:0}];S.pi=0;S.tl=[];S.camMode='free';
+['pts','dense','cum','L'].forEach(k=>Object.defineProperty(S,k,{get(){return S.paths[S.pi][k]},set(v){S.paths[S.pi][k]=v}}));
+const bot=makeBot();S.charA=bot;S.char=inst(bot);S.charSc=1;S.gOff=0;
+bot.anims.forEach(a=>S.clips.push({name:a.name+' (built-in)',an:a}));
+function fillClips(){const s=$('clipSel'),v=s.value;s.innerHTML='<option value="-1">Auto (speed ke hisaab se)</option>'+S.clips.map((c,i)=>`<option value="${i}">${c.name}</option>`).join('');s.value=v&&v<S.clips.length?v:'-1'}
+fillClips();
+/* clip speed estimate = jitni raftaar pe stance foot zameen pe nahi phisalta */
+function clipSpeed(c){const key=S.char.A.id;c.sp=c.sp||{};if(c.sp[key]!=null)return c.sp[key]*S.charSc;
+ const I=S.char,N=48,ft=['leftfoot','rightfoot'].map(n=>I.A.byName[n]);let v=1.4;
+ if(ft[0]!=null&&ft[1]!=null&&c.an.dur>0){const Y=[[],[]],Z=[[],[]],save=[I.t.map(x=>x.slice()),I.r.map(x=>x.slice())];rest(I);
+  for(let i=0;i<N;i++){applyAnim(I,c.an,i/N*c.an.dur);upd(I);ft.forEach((f,k)=>{const p=I.w[f];Y[k].push(p[13]);Z[k].push(p[14])})}
+  I.t=save[0];I.r=save[1];const my=Math.min(...Y[0],...Y[1]),tol=.04*(I.A.H||1.7),dt=c.an.dur/N;let sum=0,cnt=0;
+  for(let k=0;k<2;k++)for(let i=0;i<N;i++){const j=(i+1)%N;if(Y[k][i]<my+tol&&Y[k][j]<my+tol&&Z[k][j]<Z[k][i]){sum+=-(Z[k][j]-Z[k][i])/dt;cnt++}}
+  if(cnt>3&&sum>0)v=sum/cnt}
+ c.sp[key]=v;return v*S.charSc}
+function pickClip(v){const i=+$('clipSel').value;if(i>=0)return S.clips[i];let best=null,bd=1e9;
+ for(const c of S.clips){if(!/walk|run|jog|sprint/i.test(c.name))continue;const d=Math.abs(clipSpeed(c)-v);if(d<bd){bd=d;best=c}}return best||S.clips[0]}
+/* ---------- path ---------- */
+function rebuild(){const p=S.pts,d=[];if(p.length>=2){const g=i=>p[Math.max(0,Math.min(p.length-1,i))];
+ for(let i=0;i<p.length-1;i++)for(let k=0;k<10;k++){const t=k/10,a=g(i-1),b=g(i),c=g(i+1),e=g(i+2),f=(q)=>.5*((2*b[q])+(-a[q]+c[q])*t+(2*a[q]-5*b[q]+4*c[q]-e[q])*t*t+(-a[q]+3*b[q]-3*c[q]+e[q])*t*t*t);d.push([f(0),f(1)])}
+ d.push(p[p.length-1].slice())}
+ S.dense=d;S.cum=[0];for(let i=1;i<d.length;i++)S.cum.push(S.cum[i-1]+Math.hypot(d[i][0]-d[i-1][0],d[i][1]-d[i-1][1]));S.L=S.cum[S.cum.length-1]||0}
+function posAt(s){const d=S.dense,c=S.cum;if(d.length<2)return d[0]||[0,0];s=Math.max(0,Math.min(S.L,s));let lo=0,hi=c.length-1;while(hi-lo>1){const m=(lo+hi)>>1;c[m]<=s?lo=m:hi=m}
+ const f=c[hi]>c[lo]?(s-c[lo])/(c[hi]-c[lo]):0;return[d[lo][0]+(d[hi][0]-d[lo][0])*f,d[lo][1]+(d[hi][1]-d[lo][1])*f]}
+const angD=(a,b)=>{let d=(b-a)%(2*Math.PI);if(d>Math.PI)d-=2*Math.PI;if(d<-Math.PI)d+=2*Math.PI;return d};
+function startPose(){if(S.dense.length<2){S.cur=[S.pts[0]?.[0]||0,S.pts[0]?.[1]||0];return}const a=S.dense[0],b=posAt(.5);S.cur=a.slice();S.yaw=Math.atan2(b[0]-a[0],b[1]-a[1])}
+function setPath(){rebuild();S.play=false;S.s=0;rest(S.char);startPose();ui()}
+/* ---------- frame update ---------- */
+function update(dt){const spd=+$('spd').value;
+ if(S.play&&S.tl.length){runTL(dt,spd)}else if(S.play){const c=pickClip(spd),cs=clipSpeed(c);S.s+=spd*dt;S.t+=dt*spd/cs;S.clipN=c.name;
+  const p=posAt(S.s),q=posAt(S.s+Math.max(.35,spd*.25));let dx=q[0]-p[0],dz=q[1]-p[1];S.cur=p;
+  if(Math.hypot(dx,dz)>1e-3)S.yaw+=angD(S.yaw,Math.atan2(dx,dz))*Math.min(1,dt*7);
+  rest(S.char);applyAnim(S.char,c.an,S.t);
+  if(S.s>=S.L){S.play=false;rest(S.char);ui()}}
+ camUpdate(dt);upd(S.char)}
+/* ---------- render ---------- */
+const planes=vp=>{const P=[];for(const[s,i]of[[1,0],[-1,0],[1,1],[-1,1],[1,2],[-1,2]]){const p=[0,1,2,3].map(k=>vp[k*4+3]+s*vp[k*4+i]),l=Math.hypot(p[0],p[1],p[2]);P.push(p.map(v=>v/l))}return P};
+function drawInst(I,model,fr,own){const N=I.A.nodes;
+ for(let ni=0;ni<N.length;ni++){const n=N[ni];if(n.mesh==null)continue;const sk=n.skin!=null;const m=sk?model:M.mul(model,I.w[ni]);let jm=null;
+  for(const pm of I.A.meshes[n.mesh]){S.total++;
+   if(!sk&&fr){const c=M.tx(m,pm.c),sc=Math.max(Math.hypot(m[0],m[1],m[2]),Math.hypot(m[4],m[5],m[6]),Math.hypot(m[8],m[9],m[10]))*pm.r;let out=false;
+    for(const p of fr)if(p[0]*c[0]+p[1]*c[1]+p[2]*c[2]+p[3]<-sc){out=true;break}if(out)continue}
+   S.drawn++;gl.uniformMatrix4fv(U.uM,false,m);gl.uniform1i(U.uSk,sk?1:0);
+   if(sk){if(!jm){jm=upSkin(I,n.skin);gl.activeTexture(gl.TEXTURE1);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA32F,4,jm.length/16,0,gl.RGBA,gl.FLOAT,jm);gl.activeTexture(gl.TEXTURE0)}}
+   const mt=pm.mat;gl.uniform4fv(U.uC,mt.c);gl.uniform1f(U.uCut,mt.cut||0);gl.uniform1i(U.uHT,mt.tex?1:0);if(mt.tex)gl.bindTexture(gl.TEXTURE_2D,mt.tex);
+   gl.bindVertexArray(pm.vao);gl.drawElements(gl.TRIANGLES,pm.n,pm.ty,0)}}}
+function solid(m,c,mode){gl.uniformMatrix4fv(U.uM,false,m);gl.uniform1i(U.uSk,0);gl.uniform4fv(U.uC,c);gl.uniform1f(U.uCut,0);gl.uniform1i(U.uHT,0);gl.uniform1i(U.uMode,mode);gl.bindVertexArray(cube.vao);gl.drawElements(gl.TRIANGLES,36,gl.UNSIGNED_SHORT,0)}
+let VP=M.id(),eye=[0,0,0];
+function render(){const w=cv.width,h=cv.height;gl.viewport(0,0,w,h);gl.clearColor(.063,.075,.1,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);
+ const c=S.cam,cp=Math.cos(c.pitch);eye=[c.tg[0]+c.dist*Math.sin(c.yaw)*cp,c.tg[1]+c.dist*Math.sin(c.pitch),c.tg[2]+c.dist*Math.cos(c.yaw)*cp];
+ VP=M.mul(M.persp(.9,w/h,Math.max(.05,c.dist/200),Math.max(2000,c.dist*50)),M.look(eye,c.tg,[0,1,0]));
+ gl.uniformMatrix4fv(U.uVP,false,VP);gl.uniform3fv(U.uCam,eye);S.drawn=0;S.total=0;const fr=planes(VP);
+ if(!S.map){solid(M.trs([0,-.01,0],[0,0,0,1],[3000,.02,3000]),[1,1,1,1],1)}
+ else{gl.uniform1i(U.uMode,0);const k=S.mapScale;drawInst(S.map,M.trs([0,0,0],[0,0,0,1],[k,k,k]),fr)}
+ gl.uniform1i(U.uMode,0);if(S.cur){const sc=S.charSc,cm=M.trs([S.cur[0],S.pickY+S.gOff*sc+(S.seated?.3:0)+(S.jy||0),S.cur[1]],qY(S.yaw),[sc,sc,sc]);drawInst(S.char,cm,null)}drawCar();gl.uniform1i(U.uMode,0);
+ const ms=Math.max(.12,c.dist*.012),y=S.pickY+.04;
+ S.paths.forEach((P,pi)=>{const col=pi?[.3,.7,1,1]:[1,.62,.1,1];
+  for(let i=1;i<P.dense.length;i++){const a=P.dense[i-1],b=P.dense[i],dx=b[0]-a[0],dz=b[1]-a[1],l=Math.hypot(dx,dz);if(l<1e-6)continue;
+   solid(M.trs([(a[0]+b[0])/2,y,(a[1]+b[1])/2],qY(Math.atan2(dx,dz)),[ms*.5,ms*.25,l*1.05]),col,2)}
+  P.pts.forEach((p,i)=>solid(M.trs([p[0],y+ms*.4,p[1]],[0,0,0,1],[ms,ms*.8,ms]),i==0?[.2,.9,.4,1]:pi?[.5,.85,1,1]:[1,.9,.2,1],2))});
+ gl.bindVertexArray(null)}
+/* ---------- input ---------- */
+function resize(){const d=Math.min(devicePixelRatio||1,1.5)*S.rs;cv.width=Math.max(2,Math.round(innerWidth*d));cv.height=Math.max(2,Math.round(innerHeight*d))}
+let lrT;function lowres(on){clearTimeout(lrT);if(on){if(S.rs!==.5){S.rs=.5;resize()}}else lrT=setTimeout(()=>{S.rs=1;resize()},300)}
+addEventListener('resize',resize);
+function tap(x,y){if(!S.pathOn)return;const w=innerWidth,h=innerHeight,iv=M.inv(VP),nx=x/w*2-1,ny=1-y/h*2;
+ const un=z=>{const v=[nx,ny,z,1],o=[0,0,0,0];for(let r=0;r<4;r++)o[r]=iv[r]*v[0]+iv[4+r]*v[1]+iv[8+r]*v[2]+iv[12+r]*v[3];return[o[0]/o[3],o[1]/o[3],o[2]/o[3]]};
+ const a=un(-1),b=un(1),t=(S.pickY-a[1])/(b[1]-a[1]);if(!(t>0))return toast('Zameen par tap karo');S.pts.push([a[0]+(b[0]-a[0])*t,a[2]+(b[2]-a[2])*t]);setPath()}
+const P=new Map();let tT=0,mv=0,pd=0;
+cv.onpointerdown=e=>{cv.setPointerCapture(e.pointerId);P.set(e.pointerId,[e.clientX,e.clientY]);tT=performance.now();mv=P.size>1?99:0;if(P.size===2){const[a,b]=[...P.values()];pd=Math.hypot(a[0]-b[0],a[1]-b[1])}lowres(true)};
+cv.onpointermove=e=>{const o=P.get(e.pointerId);if(!o)return;const dx=e.clientX-o[0],dy=e.clientY-o[1];P.set(e.pointerId,[e.clientX,e.clientY]);mv+=Math.abs(dx)+Math.abs(dy);const c=S.cam;
+ if(P.size===1){c.yaw-=dx*.006;c.pitch=Math.max(.05,Math.min(1.5,c.pitch+dy*.006))}
+ else if(P.size===2){const[a,b]=[...P.values()],d=Math.hypot(a[0]-b[0],a[1]-b[1]);if(pd>0)c.dist=Math.max(.5,Math.min(5000,c.dist*pd/d));pd=d;
+  const k=c.dist*.0015,r=[Math.cos(c.yaw),-Math.sin(c.yaw)],f=[-Math.sin(c.yaw),-Math.cos(c.yaw)];c.tg[0]-=(r[0]*dx*.5-f[0]*dy*.5)*k;c.tg[2]-=(r[1]*dx*.5-f[1]*dy*.5)*k}};
+cv.onpointerup=cv.onpointercancel=e=>{const was=P.size===1&&mv<10&&performance.now()-tT<350;const o=P.get(e.pointerId);P.delete(e.pointerId);if(was&&o)tap(o[0],o[1]);if(!P.size)lowres(false)};
+cv.onwheel=e=>{e.preventDefault();S.cam.dist=Math.max(.5,Math.min(5000,S.cam.dist*(1+e.deltaY*.001)))};
+/* ---------- UI ---------- */
+function ui(){$('bPlay').textContent=S.play?'⏹ Ruko':'▶ Chalo';$('bPlay').classList.toggle('on',S.play);$('bPath').textContent='✏️ P'+(S.pi+1)+(S.pathOn?' ON':' OFF');$('bPath').classList.toggle('on',S.pathOn);
+ $('st').textContent=`P${S.pi+1}: ${S.pts.length} point · ${S.L.toFixed(1)}m · ${S.play?(S.tl.length?'step '+(S.ti+1)+'/'+S.tl.length:(S.clipN||'')):'ruka'}`}
+$('bPath').onclick=()=>{if(!S.pathOn){S.pathOn=true;S.pi=0}else if(S.pi===0)S.pi=1;else S.pathOn=false;ui()};
+$('bUndo').onclick=()=>{S.pts.pop();setPath()};$('bClr').onclick=()=>{S.pts=[];setPath()};
+$('bPlay').onclick=()=>{if(S.play){S.play=false;if(!S.tl.length)rest(S.char);stopRec();ui();return}if(S.tl.length){resetTL();S.play=true;ui();return}if(S.dense.length<2)return toast('Pehle map pe 2+ point tap karo');S.s=0;S.t=0;startPose();S.play=true;ui()};
+$('spd').oninput=()=>$('spdv').textContent=$('spd').value;
+$('msz').oninput=()=>{S.mapScale=Math.pow(10,+$('msz').value);if(S.mapB)setMapB()};
+$('bImp').onclick=()=>{$('sheet').classList.add('show');listSaved()};$('close').onclick=()=>$('sheet').classList.remove('show');
+let role='';S.fp='auto';
+$('bFp').onclick=()=>{S.fp=S.fp==='auto'?'web':'auto';$('bFp').textContent=S.fp==='auto'?'Files chooser: Auto (native)':'Files chooser: Browser wala'};
+async function pickNative(r){const FP=window.Capacitor&&window.Capacitor.Plugins&&window.Capacitor.Plugins.FilePicker;if(!FP||S.fp==='web')return false;
+ try{const res=await FP.pickFiles({limit:0,readData:true});
+  for(const f of res.files){const bin=atob(f.data),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
+   if(/\.fbx$/i.test(f.name)){toast('FBX parser Phase 5 mein aayega');continue}await addAsset(r,f.name,u.buffer,true)}
+  $('sheet').classList.remove('show');return true}
+ catch(e){if(/cancel/i.test(e.message||''))return true;toast('Native picker fail, browser wala chalaya');return false}}
+document.querySelectorAll('[data-r]').forEach(b=>b.onclick=async()=>{role=b.dataset.r;if(await pickNative(role))return;$('fi').value='';$('fi').click()});
+$('fi').onchange=async e=>{for(const f of e.target.files){try{if(/\.fbx$/i.test(f.name)){toast('FBX parser Phase 5 mein aayega — abhi .glb use karo');continue}
+ const buf=await f.arrayBuffer();await addAsset(role,f.name,buf,true)}catch(err){toast('Error: '+(err.message||err))}}$('sheet').classList.remove('show')};
+/* ---------- assets + IndexedDB ---------- */
+const DB=new Promise(res=>{try{const r=indexedDB.open('studio3d',1);r.onupgradeneeded=()=>r.result.createObjectStore('f',{keyPath:'id',autoIncrement:true});r.onsuccess=()=>res(r.result);r.onerror=()=>res(null)}catch(e){res(null)}});
+const dbx=async(mode,fn)=>{const d=await DB;if(!d)return null;return new Promise(r=>{const t=d.transaction('f',mode),s=t.objectStore('f'),q=fn(s);t.oncomplete=()=>r(q&&q.result);t.onerror=()=>r(null)})};
+const dbAll=()=>dbx('readonly',s=>s.getAll());
+async function setMapB(){const b=S.mapB,k=S.mapScale;S.pickY=b.min[1]*k;const sz=Math.max(b.max[0]-b.min[0],b.max[2]-b.min[2])*k;S.cam.tg=[(b.min[0]+b.max[0])/2*k,S.pickY,(b.min[2]+b.max[2])/2*k];S.cam.dist=Math.max(5,sz*.9)}
+function mapBounds(I){upd(I);let mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];I.A.nodes.forEach((n,i)=>{if(n.mesh==null)return;for(const pm of I.A.meshes[n.mesh])for(let c=0;c<8;c++){
+ const p=M.tx(I.w[i],[c&1?pm.max[0]:pm.min[0],c&2?pm.max[1]:pm.min[1],c&4?pm.max[2]:pm.min[2]]);for(let k=0;k<3;k++){mn[k]=Math.min(mn[k],p[k]);mx[k]=Math.max(mx[k],p[k])}}});return{min:mn,max:mx}}
+async function addAsset(r,name,buf,save){
+ if(!r)return toast('Pehle role chuno (Map/Character/Clip)');
+ const A=await loadGLB(buf);
+ if(r==='map'){S.mapA=A;S.map=inst(A);S.mapB=mapBounds(S.map);S.mapScale=1;$('msz').value=0;
+  const ext=Math.max(S.mapB.max[0]-S.mapB.min[0],S.mapB.max[2]-S.mapB.min[2]);if(ext>200){S.mapScale=Math.pow(10,-Math.round(Math.log10(ext/20)));$('msz').value=Math.log10(S.mapScale)}
+  setMapB();S.pts=[];setPath();toast(`Map ready: ${A.meshes.reduce((a,m)=>a+m.length,0)} meshes`)}
+ else if(r==='char'){const I=inst(A);upd(I);let mn=1e9,mx=-1e9;A.nodes.forEach((n,i)=>{if(A.skins.length&&!A.skins[0].j.includes(i))return;mn=Math.min(mn,I.w[i][13]);mx=Math.max(mx,I.w[i][13])});
+  if(!(mx>mn)){mn=0;mx=1}A.H=mx-mn;S.charA=A;S.char=I;S.charSc=1.75/A.H;S.gOff=-mn;rest(I);S.clips.forEach(c=>delete c.sp);startPose();toast('Character ready')}
+ else if(r==='clip'){if(!A.anims.length)throw new Error('is file mein animation nahi');A.anims.forEach(a=>S.clips.push({name:name.replace(/\.glb$/i,'')+(A.anims.length>1?':'+a.name:''),an:a}));fillClips();toast(A.anims.length+' clip add hui')}
+ else if(r==='prop'){const I=inst(A),b=mapBounds(I),ex=Math.max(b.max[0]-b.min[0],b.max[2]-b.min[2])||1;S.props=[{name,A,I,k:4.2/ex,cx:(b.min[0]+b.max[0])/2,cz:(b.min[2]+b.max[2])/2,minY:b.min[1]}];toast('Gadi/Prop lag gayi')}
+ if(save){if(r==='map'||r==='char'){const all=await dbAll()||[];for(const x of all)if(x.role===r)await dbx('readwrite',s=>s.delete(x.id))}await dbx('readwrite',s=>s.add({role:r,name,buf}))}}
+async function listSaved(){const a=await dbAll()||[];$('list').textContent=a.length?'Saved: '+a.map(x=>x.role+':'+x.name).join(' · '):'Kuch saved nahi'}
+$('wipe').onclick=async()=>{await dbx('readwrite',s=>s.clear());listSaved();toast('Saved hata diya (ab reload par wapas nahi aayega)')};
+(async()=>{const a=await dbAll()||[];for(const x of a.sort((p,q)=>p.id-q.id))try{await addAsset(x.role,x.name,x.buf,false)}catch(e){}ui()})();
+
+/* ---------- Phase 2-4: timeline, gadi, camera, prompt, record ---------- */
+const posOn=(pi,s)=>{const o=S.pi;S.pi=pi;const r=posAt(s);S.pi=o;return r};
+function setRot(I,n,a){const i=I.A.byName[n];if(i!=null)I.r[i]=[Math.sin(a/2),0,0,Math.cos(a/2)]}
+function seatPose(I){setRot(I,'leftupleg',-1.5);setRot(I,'rightupleg',-1.5);setRot(I,'leftleg',1.5);setRot(I,'rightleg',1.5);const h=I.A.byName.hips;if(h!=null)I.t[h]=[I.t[h][0],I.A.nodes[h].t[1]*.58,I.t[h][2]]}
+function drawCar(){const p=S.carPos;if(!p)return;const pr=S.props&&S.props[0],base=M.trs([p[0],S.pickY,p[1]],qY(S.carYaw||0),[1,1,1]);
+ if(pr){const k=pr.k;gl.uniform1i(U.uMode,0);drawInst(pr.I,M.mul(base,M.trs([-pr.cx*k,-pr.minY*k,-pr.cz*k],[0,0,0,1],[k,k,k])),null);return}
+ const part=(o,sz,c)=>solid(M.mul(base,M.trs(o,[0,0,0,1],sz)),c,0);
+ part([0,.45,0],[1.8,.5,3.8],[.8,.15,.12,1]);part([0,.85,1.5],[1.6,.2,.9],[.75,.13,.1,1]);part([0,1,.75],[1.6,.5,.08],[.3,.45,.6,1]);part([0,.76,-.25],[.9,.1,.9],[.15,.15,.18,1]);
+ for(const x of[-.95,.95])for(const z of[-1.2,1.3])part([x,.32,z],[.25,.64,.64],[.08,.08,.08,1])}
+function resetTL(){S.ti=0;S.en=0;S.seated=false;S.jy=0;S.t=0;S.carPos=S.carHome?S.carHome.slice():null;S.carYaw=S.carHomeYaw||0;rest(S.char);
+ const P=S.paths[0];if(P.L>0){S.cur=posOn(0,0);const q=posOn(0,.6);S.yaw=Math.atan2(q[0]-S.cur[0],q[1]-S.cur[1])}}
+function endTL(){S.play=false;if(!S.seated)rest(S.char);stopRec();ui()}
+function runTL(dt,spd){const st=S.tl[S.ti];if(!st)return endTL();const k=spd/1.3,I=S.char,P=S.paths[st.p||0];
+ if(!S.en){S.en=1;S.tt=0;S.ts=0;S.y0=S.yaw;S.sf=S.cur.slice();
+  if(st.a==='drive'){S.carPos=posOn(st.p,P.L*st.f0);const q=posOn(st.p,P.L*st.f0+.6);S.carYaw=Math.atan2(q[0]-S.carPos[0],q[1]-S.carPos[1])}}
+ S.tt+=dt;rest(I);let done=false;
+ switch(st.a){
+ case'walk':case'run':{const v=(st.a==='run'?4:1.3)*k,Lr=P.L*(st.f1-st.f0);S.ts+=v*dt;const s=P.L*st.f0+Math.min(S.ts,Lr),p=posOn(st.p,s),q=posOn(st.p,s+Math.max(.35,v*.25));S.cur=p;
+  if(Math.hypot(q[0]-p[0],q[1]-p[1])>1e-3)S.yaw+=angD(S.yaw,Math.atan2(q[0]-p[0],q[1]-p[1]))*Math.min(1,dt*7);
+  const c=pickClip(v),cs=clipSpeed(c);S.t+=dt*v/cs;applyAnim(I,c.an,S.t);S.clipN=c.name;done=S.ts>=Lr;break}
+ case'stop':done=S.tt>=st.t;break;
+ case'sit_free':seatPose(I);done=S.tt>=st.t;break;
+ case'turn':{const u=Math.min(1,S.tt/.6);S.yaw=S.y0+st.ang*u;done=u>=1;break}
+ case'jump':{const u=Math.min(1,S.tt/.9),h=Math.sin(Math.PI*u);setRot(I,'leftupleg',-.9*(1-h*.3));setRot(I,'rightupleg',-.9*(1-h*.3));setRot(I,'leftleg',1.2*(1-h));setRot(I,'rightleg',1.2*(1-h));S.jy=h*.7;done=u>=1;break}
+ case'throw':{const u=Math.min(1,S.tt/.9);setRot(I,'rightarm',-2.6*Math.sin(Math.PI*u));setRot(I,'rightforearm',-.3);done=u>=1;break}
+ case'sit':{const u=Math.min(1,S.tt/1),c=S.carPos||S.sf;S.cur=[S.sf[0]+(c[0]-S.sf[0])*u,S.sf[1]+(c[1]-S.sf[1])*u];S.yaw+=angD(S.yaw,S.carYaw||S.yaw)*Math.min(1,dt*6);if(u>.4)seatPose(I);if(u>=1){S.seated=true;done=true}break}
+ case'drive':{const v=5*k,Lr=P.L*(st.f1-st.f0);S.ts+=v*dt;const s=P.L*st.f0+Math.min(S.ts,Lr),p=posOn(st.p,s),q=posOn(st.p,s+Math.max(1,v*.4));S.carPos=p;
+  if(Math.hypot(q[0]-p[0],q[1]-p[1])>1e-3)S.carYaw+=angD(S.carYaw,Math.atan2(q[0]-p[0],q[1]-p[1]))*Math.min(1,dt*5);
+  S.cur=p;S.yaw=S.carYaw;S.seated=true;done=S.ts>=Lr;break}}
+ if(S.seated)seatPose(I);
+ if(done){S.ti++;S.en=0;S.jy=0;if(S.ti>=S.tl.length)endTL()}}
+function camUpdate(dt){const m=S.camMode;if(m==='free'||!S.cur)return;const c=S.cam,seat=S.seated&&S.carPos,f=seat?S.carPos:S.cur,h=seat?S.carYaw:S.yaw,k=Math.min(1,dt*4);
+ c.tg[0]+=(f[0]-c.tg[0])*k;c.tg[1]=S.pickY+1;c.tg[2]+=(f[1]-c.tg[2])*k;let ty=c.yaw,tp=.3,td=6;
+ if(m==='follow'){ty=h+Math.PI}else if(m==='top'){tp=1.45;td=14}else if(m==='side'){ty=h+Math.PI/2;tp=.25;td=7}else if(m==='front'){ty=h;tp=.2;td=5}else if(m==='orbit'){ty=c.yaw+.5;tp=.4;td=8}
+ c.yaw+=angD(c.yaw,ty)*(m==='orbit'?dt:k);c.pitch+=(tp-c.pitch)*k;c.dist+=(td-c.dist)*k}
+const LBL={walk:'chalna',run:'bhaagna',stop:'rukna',turn:'mudna',sit:'gadi mein baithna',sit_free:'baithna',drive:'gadi chalana',jump:'kudna',throw:'phenkna'};
+function showTL(){$('tl').textContent=S.tl.length?S.tl.map((s,i)=>`${i+1}. ${LBL[s.a]}${s.p!=null?' (Path '+(s.p+1)+')':''}`).join('\n'):'Timeline khali hai. Prompt box mein likho.'}
+function parseTL(txt){const t=txt.toLowerCase().replace(/[.!?]/g,' '),steps=[],unk=[],num=c=>+(c.match(/(\d+)\s*(?:sec|second)/)?.[1]||2);
+ const cl=t.split(/\s+(?:aur|phir|fir|uske baad|uske bad|then|and)\s+|,|;|\s+aage\s+/).map(x=>x.trim()).filter(Boolean);
+ for(const c of cl){const car=/gadi|gaadi|car|jeep/.test(c);let s=null;
+  if(car&&/baith|bait|sit/.test(c))s={a:'sit'};else if(car&&/chal|drive|bhaag/.test(c))s={a:'drive'};
+  else if(/baith|bait|sit/.test(c))s={a:'sit_free',t:num(c)};else if(/kud|jump/.test(c))s={a:'jump'};else if(/phenk|fenk|throw/.test(c))s={a:'throw'};
+  else if(/\bmud|ghum|turn/.test(c))s={a:'turn',ang:(/baay|left|ulta/.test(c)?1:-1)*Math.PI/2};else if(/ruk|stop|khad|thehar|wait/.test(c))s={a:'stop',t:num(c)};
+  else if(/bhaag|daud|run/.test(c))s={a:'run'};else if(/chal|\baa|walk|\bja|pahunch/.test(c))s={a:'walk'};
+  s?steps.push(s):unk.push(c)}
+ const mv=x=>['walk','run','drive'].includes(x.a),need=steps.filter(mv);need.forEach(x=>x.p=(x.a==='drive'&&S.paths[1].L>0)?1:0);
+ for(const x of need)if(!(S.paths[x.p].L>0))return{err:'Pehle map pe Path '+(x.p+1)+' banao (kam se kam 2 point)'};
+ [0,1].forEach(p=>{const m=need.filter(x=>x.p===p);m.forEach((x,i)=>{x.f0=i/m.length;x.f1=(i+1)/m.length})});
+ if(steps.some(x=>x.a==='sit'||x.a==='drive')){const d=steps.find(x=>x.a==='drive');
+  if(d&&d.p===1){S.carHome=posOn(1,0);const q=posOn(1,.6);S.carHomeYaw=Math.atan2(q[0]-S.carHome[0],q[1]-S.carHome[1])}
+  else if(S.paths[0].L>0){const L=S.paths[0].L,e=posOn(0,L),q=posOn(0,L-.5),h=Math.atan2(e[0]-q[0],e[1]-q[1]);S.carHome=[e[0]+Math.cos(h)*1.8,e[1]-Math.sin(h)*1.8];S.carHomeYaw=h}}
+ else S.carHome=null;
+ return{steps,unk}}
+$('bGo').onclick=()=>{const r=parseTL($('prm').value);if(r.err)return toast(r.err);if(!r.steps.length)return toast('Samajh nahi aaya. Likho: chalte hue aao, phir gadi mein baitho');
+ S.tl=r.steps;showTL();resetTL();S.play=false;ui();toast(r.steps.length+' step bane'+(r.unk.length?' · nahi samjha: '+r.unk.join(', '):''))};
+$('bMore').onclick=()=>$('sheet2').classList.add('show');$('bClose2').onclick=()=>$('sheet2').classList.remove('show');
+$('bTlc').onclick=()=>{S.tl=[];S.carHome=null;S.carPos=null;S.seated=false;S.play=false;rest(S.char);showTL();ui()};
+$('camSel').onchange=()=>S.camMode=$('camSel').value;
+let rec=null,chunks=[];
+function recStart(){try{const mt=['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm','video/mp4'].find(t=>MediaRecorder.isTypeSupported(t));
+ rec=new MediaRecorder(cv.captureStream(30),{mimeType:mt,videoBitsPerSecond:6e6});chunks=[];rec.ondataavailable=e=>e.data.size&&chunks.push(e.data);
+ rec.onstop=()=>saveBlob(new Blob(chunks,{type:mt}),'animation.'+(mt.includes('mp4')?'mp4':'webm'));rec.start(500);toast('Recording shuru')}catch(e){rec=null;toast('Record support nahi: '+e.message)}}
+function stopRec(){if(rec&&rec.state!=='inactive'){rec.stop();rec=null}}
+async function saveBlob(b,name){S.lastSave={name,size:b.size};
+ try{const P=window.Capacitor&&window.Capacitor.Plugins;if(P&&P.Filesystem&&P.Share){const b64=await new Promise(res=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.readAsDataURL(b)});
+  const w=await P.Filesystem.writeFile({path:name,data:b64,directory:'CACHE'});await P.Share.share({title:name,url:w.uri});return}}catch(e){toast('Share fail: '+(e.message||e))}
+ const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>a.remove(),1500);toast(name+' save hua')}
+$('bRec').onclick=()=>{if(!S.tl.length)return toast('Pehle prompt se timeline banao');$('sheet2').classList.remove('show');recStart();resetTL();S.play=true;ui()};
+$('bSave').onclick=()=>saveBlob(new Blob([JSON.stringify({v:1,paths:S.paths.map(p=>p.pts),tl:S.tl,carHome:S.carHome,carHomeYaw:S.carHomeYaw,spd:+$('spd').value,cam:S.camMode,prm:$('prm').value})],{type:'application/json'}),'project.json');
+$('bLoad').onclick=()=>{$('fj').value='';$('fj').click()};
+$('fj').onchange=async e=>{try{const j=JSON.parse(await e.target.files[0].text());S.paths.forEach((P,i)=>{P.pts=j.paths[i]||[]});const o=S.pi;S.paths.forEach((_,i)=>{S.pi=i;rebuild()});S.pi=o;
+ S.tl=j.tl||[];S.carHome=j.carHome||null;S.carHomeYaw=j.carHomeYaw||0;$('spd').value=j.spd||1.3;$('prm').value=j.prm||'';S.camMode=j.cam||'free';$('camSel').value=S.camMode;showTL();resetTL();ui();toast('Project load hua')}catch(err){toast('Project file galat hai')}};
+/* ---------- loop ---------- */
+let last=performance.now();resize();ui();
+function frame(now){const dt=Math.min(.05,(now-last)/1000);last=now;update(dt);render();if(S.play)ui();if(window.app.onFrame)window.app.onFrame(dt);requestAnimationFrame(frame)}
+window.app={S,posOn,addAsset,tapAt:tap,setPts(p){S.pts=p;setPath()},play:()=>$('bPlay').click(),
+ foot(){const I=S.char,sc=S.charSc,cm=M.trs([S.cur[0],S.pickY+S.gOff*sc,S.cur[1]],qY(S.yaw),[sc,sc,sc]);return['leftfoot','rightfoot'].map(n=>M.tx(cm,[I.w[I.A.byName[n]][12],I.w[I.A.byName[n]][13],I.w[I.A.byName[n]][14]]))},
+ clipSpeed:()=>S.clips.map(c=>[c.name,clipSpeed(c)]),
+ dump(ci,N=12){const I=S.char,an=S.clips[ci].an,o=[];rest(I);for(let i=0;i<N;i++){applyAnim(I,an,i/N*an.dur);upd(I);o.push(['leftfoot','rightfoot'].map(n=>{const w=I.w[I.A.byName[n]];return[+w[13].toFixed(3),+w[14].toFixed(3)]}))}rest(I);return o}};
+requestAnimationFrame(frame);
+</script></body></html>

@@ -1,0 +1,6 @@
+{
+  "appId": "com.studio3d.app",
+  "appName": "3D Studio",
+  "webDir": "www",
+  "android": { "allowMixedContent": false }
+}
